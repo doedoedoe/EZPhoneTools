@@ -2,10 +2,10 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Phone Stripper</title>
+  <title>Phone Cleaner</title>
 </head>
 <body style="font-family: sans-serif; padding: 20px; max-width: 900px;">
-  <h3>Phone Stripper (Auto)</h3>
+  <h3>Phone Cleaner (Auto)</h3>
 
   <div style="display:flex; gap:20px; flex-wrap:wrap;">
     <label><input type="checkbox" id="keep10" /> Keep only last 10 digits</label>
@@ -41,46 +41,72 @@ function pretty10(d) {
 }
 
 function splitIntoPieces(text) {
-  // Split on common separators: newline, comma, slash, semicolon, tab, pipe
-  // This fixes the “comma separated list” bug.
-  return text.split(/[\r\n,;\/\t|]+/g);
+  // Split on newlines, commas, semicolons, tabs, pipes
+  // Do NOT split on slash or dash — needed for range detection
+  return text.split(/[\r\n,;\t|]+/g);
 }
 
-function normalizeToPhoneDigits(piece) {
-  const digits = (piece || "").replace(/\D/g, "");
+function toPhoneDigits(str) {
+  const digits = (str || "").replace(/\D/g, "");
   if (!digits) return "";
-
-  // Accept:
-  // - 10 digits (standard NANP)
-  // - 11 digits starting with 1 (US country code)
-  // - >11 digits: ignore (usually garbage concatenations)
   if (digits.length === 10) return digits;
   if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
-
-  // Also allow things like "ext 9" attached after a number:
-  // If there are >=10 digits, take the LAST 10 (common when extensions exist).
   if (digits.length > 10) return digits.slice(-10);
-
-  // Too short to be a phone number
   return "";
 }
 
+// Detect lines like "7659327000 - 7659327099" or "765-932-7000 - 765-932-7099"
+// Returns an array of digit strings if valid range, otherwise null.
+// Extract all 10-digit phone numbers from a string
+function extractAllPhoneNumbers(piece) {
+  const matches = piece.match(/\d{7,}/g) || [];
+  return matches.map(m => toPhoneDigits(m)).filter(Boolean);
+}
+
+// If a line contains exactly two phone numbers, treat it as a range.
+// Handles prefixes like "DID range - 7659327000 - 7659327099"
+function tryExpandRange(piece) {
+  const nums = extractAllPhoneNumbers(piece);
+  if (nums.length !== 2) return null;
+
+  const s = parseInt(nums[0], 10);
+  const e = parseInt(nums[1], 10);
+
+  // Must be a forward range and not absurdly large
+  if (e <= s || (e - s) > 10000) return null;
+
+  const results = [];
+  for (let n = s; n <= e; n++) {
+    results.push(String(n).padStart(10, "0"));
+  }
+  return results;
+}
+
 function recompute() {
-  const keep10 = el("keep10").checked;     // now mostly redundant, but still useful if you paste weird stuff
+  const keep10 = el("keep10").checked;
   const pretty = el("formatPretty").checked;
   const dropEmpty = el("dropEmpty").checked;
   const dedupe = el("dedupe").checked;
 
   const pieces = splitIntoPieces(el("input").value);
 
-  let outList = pieces
-    .map(p => {
-      let d = normalizeToPhoneDigits(p);
-      if (!d) return "";
-      if (keep10) d = d.slice(-10);
-      return d;
-    })
-    .filter(Boolean);
+  let outList = [];
+  for (const p of pieces) {
+    const trimmed = p.trim();
+    // First try to expand as a range (e.g. "7659327000 - 7659327099")
+    const expanded = tryExpandRange(trimmed);
+    if (expanded) {
+      let exp = expanded;
+      if (keep10) exp = exp.map(d => d.slice(-10));
+      outList.push(...exp);
+      continue;
+    }
+    // Otherwise treat as a single number
+    let d = toPhoneDigits(trimmed);
+    if (!d) continue;
+    if (keep10) d = d.slice(-10);
+    outList.push(d);
+  }
 
   if (pretty) outList = outList.map(pretty10);
 
